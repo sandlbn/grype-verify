@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Intel Corporation
 use anyhow::Context;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -46,8 +46,8 @@ pub fn result_label(exit_code: i32) -> &'static str {
 }
 
 pub fn open(path: &str) -> anyhow::Result<Connection> {
-    let conn = Connection::open(path)
-        .with_context(|| format!("failed to open checks DB at {path}"))?;
+    let conn =
+        Connection::open(path).with_context(|| format!("failed to open checks DB at {path}"))?;
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;
          CREATE TABLE IF NOT EXISTS checks (
@@ -291,10 +291,19 @@ mod tests {
         let latest = query_latest_per_sbom(&conn).unwrap();
         assert_eq!(latest.len(), 2);
 
-        let a = latest.iter().find(|r| r.sbom_path == "a.spdx.json").unwrap();
-        assert_eq!(a.timestamp, 3000, "should return the newest check for a.spdx.json");
+        let a = latest
+            .iter()
+            .find(|r| r.sbom_path == "a.spdx.json")
+            .unwrap();
+        assert_eq!(
+            a.timestamp, 3000,
+            "should return the newest check for a.spdx.json"
+        );
 
-        let b = latest.iter().find(|r| r.sbom_path == "b.spdx.json").unwrap();
+        let b = latest
+            .iter()
+            .find(|r| r.sbom_path == "b.spdx.json")
+            .unwrap();
         assert_eq!(b.exit_code, 1);
     }
 

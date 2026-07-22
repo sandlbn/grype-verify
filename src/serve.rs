@@ -86,7 +86,10 @@ fn parse_request(stream: &TcpStream) -> Option<Request> {
 }
 
 fn qparam<'a>(query: &'a [(String, String)], key: &str) -> Option<&'a str> {
-    query.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    query
+        .iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.as_str())
 }
 
 // ─── HTTP response helpers ────────────────────────────────────────────────────
@@ -328,8 +331,7 @@ mod tests {
 
 pub fn run(args: ServeArgs) -> anyhow::Result<()> {
     let addr = format!("{}:{}", args.bind, args.port);
-    let listener = TcpListener::bind(&addr)
-        .with_context(|| format!("failed to bind to {addr}"))?;
+    let listener = TcpListener::bind(&addr).with_context(|| format!("failed to bind to {addr}"))?;
 
     eprintln!("[grype-verify] API server listening on http://{addr}");
     eprintln!("[grype-verify] Endpoints:");

@@ -60,8 +60,7 @@ fn require_binary() -> PathBuf {
             .expect("failed to run cargo build");
         assert!(status.success(), "cargo build --release failed");
         // After release build the binary is under target/release/, not target/debug/.
-        let release = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target/release/grype-verify");
+        let release = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/release/grype-verify");
         return release;
     }
     bin
@@ -97,7 +96,11 @@ fn test_scan_real_sboms_and_record() {
 
     let bin = require_binary();
     let sboms = find_sboms(&sbom_dir());
-    assert!(!sboms.is_empty(), "no *.spdx.json files found in {:?}", sbom_dir());
+    assert!(
+        !sboms.is_empty(),
+        "no *.spdx.json files found in {:?}",
+        sbom_dir()
+    );
 
     let db_path = tmp_db();
 
@@ -107,10 +110,14 @@ fn test_scan_real_sboms_and_record() {
             .args([
                 "scan",
                 sbom.to_str().unwrap(),
-                "--output", "table",
-                "--fail-on", "critical",
-                "--update-timeout", "30",
-                "--checks-db", &db_path,
+                "--output",
+                "table",
+                "--fail-on",
+                "critical",
+                "--update-timeout",
+                "30",
+                "--checks-db",
+                &db_path,
             ])
             .env("GRYPE_DB_UPDATE_URL", "http://127.0.0.1:19999/offline") // force offline mode
             .output()
@@ -159,7 +166,11 @@ fn test_api_returns_scan_result() {
 
     let bin = require_binary();
     let sboms = find_sboms(&sbom_dir());
-    assert!(!sboms.is_empty(), "no *.spdx.json files in {:?}", sbom_dir());
+    assert!(
+        !sboms.is_empty(),
+        "no *.spdx.json files in {:?}",
+        sbom_dir()
+    );
     let sbom = &sboms[0];
 
     let db_path = tmp_db();
@@ -169,10 +180,14 @@ fn test_api_returns_scan_result() {
         .args([
             "scan",
             sbom.to_str().unwrap(),
-            "--output", "table",
-            "--fail-on", "critical",
-            "--update-timeout", "30",
-            "--checks-db", &db_path,
+            "--output",
+            "table",
+            "--fail-on",
+            "critical",
+            "--update-timeout",
+            "30",
+            "--checks-db",
+            &db_path,
         ])
         .env("GRYPE_DB_UPDATE_URL", "http://127.0.0.1:19999/offline")
         .output()
@@ -185,9 +200,12 @@ fn test_api_returns_scan_result() {
     let mut server = Command::new(&bin)
         .args([
             "serve",
-            "--bind", "127.0.0.1",
-            "--port", &port.to_string(),
-            "--checks-db", &db_path,
+            "--bind",
+            "127.0.0.1",
+            "--port",
+            &port.to_string(),
+            "--checks-db",
+            &db_path,
         ])
         .spawn()
         .expect("failed to start serve");
@@ -196,8 +214,12 @@ fn test_api_returns_scan_result() {
 
     // Query health
     let health = Command::new("curl")
-        .args(["-s", "--noproxy", "127.0.0.1",
-               &format!("http://127.0.0.1:{port}/api/v1/health")])
+        .args([
+            "-s",
+            "--noproxy",
+            "127.0.0.1",
+            &format!("http://127.0.0.1:{port}/api/v1/health"),
+        ])
         .output()
         .expect("curl health failed");
     let health_json: serde_json::Value =
@@ -207,8 +229,12 @@ fn test_api_returns_scan_result() {
 
     // Query /checks/latest
     let latest = Command::new("curl")
-        .args(["-s", "--noproxy", "127.0.0.1",
-               &format!("http://127.0.0.1:{port}/api/v1/checks/latest")])
+        .args([
+            "-s",
+            "--noproxy",
+            "127.0.0.1",
+            &format!("http://127.0.0.1:{port}/api/v1/checks/latest"),
+        ])
         .output()
         .expect("curl latest failed");
     let latest_json: serde_json::Value =
@@ -246,15 +272,20 @@ fn test_require_update_fails_offline() {
             "scan",
             sboms[0].to_str().unwrap(),
             "--require-update",
-            "--update-timeout", "2",
-            "--checks-db", &db_path,
+            "--update-timeout",
+            "2",
+            "--checks-db",
+            &db_path,
         ])
         .env("GRYPE_DB_UPDATE_URL", "http://127.0.0.1:19999/offline")
         .output()
         .expect("failed to run grype-verify");
 
     let code = out.status.code().unwrap_or(0);
-    assert_ne!(code, 0, "--require-update should fail when DB update is unreachable");
+    assert_ne!(
+        code, 0,
+        "--require-update should fail when DB update is unreachable"
+    );
 
     std::fs::remove_file(&db_path).ok();
 }

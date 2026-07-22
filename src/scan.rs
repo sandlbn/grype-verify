@@ -134,7 +134,10 @@ pub fn run(args: ScanArgs) -> anyhow::Result<()> {
             raw_output: Some(raw_output),
         };
         let row_id = db::insert(&conn, &rec)?;
-        eprintln!("[grype-verify] Result recorded (check id={row_id}, db={}).", args.checks_db);
+        eprintln!(
+            "[grype-verify] Result recorded (check id={row_id}, db={}).",
+            args.checks_db
+        );
     }
 
     std::process::exit(exit_code);

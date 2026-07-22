@@ -17,8 +17,8 @@ pub struct StatusArgs {
 }
 
 pub fn run(args: StatusArgs) -> anyhow::Result<()> {
-    let conn = db::open(&args.checks_db)
-        .with_context(|| format!("cannot open {}", args.checks_db))?;
+    let conn =
+        db::open(&args.checks_db).with_context(|| format!("cannot open {}", args.checks_db))?;
 
     let total = db::count(&conn)?;
     let latest = db::query_latest_per_sbom(&conn)?;
@@ -34,7 +34,10 @@ pub fn run(args: StatusArgs) -> anyhow::Result<()> {
 
     // ── one-liner summary ──────────────────────────────────────────────
     if total == 0 {
-        println!("grype-verify: no checks recorded yet (db={})", args.checks_db);
+        println!(
+            "grype-verify: no checks recorded yet (db={})",
+            args.checks_db
+        );
         return Ok(());
     }
 
