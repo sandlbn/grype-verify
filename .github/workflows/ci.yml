@@ -57,7 +57,7 @@ jobs:
           restore-keys: cargo-${{ runner.os }}-
 
       - name: Run unit tests
-        run: cargo test --lib
+        run: cargo test --bin
 
   integration:
     name: Integration tests
