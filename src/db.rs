@@ -124,7 +124,7 @@ pub fn query_checks(
     since_ts: Option<i64>,
     limit: Option<i64>,
 ) -> anyhow::Result<Vec<CheckRecord>> {
-    let cap = limit.unwrap_or(100).max(1).min(10_000);
+    let cap = limit.unwrap_or(100).clamp(1, 10_000);
     let since = since_ts.unwrap_or(0);
     let mut stmt = conn.prepare(
         "SELECT id,
