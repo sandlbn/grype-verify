@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy -- -D warnings
+
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Run unit tests
+        run: cargo test --lib
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Install grype
+        env:
+          GRYPE_VERSION: "0.115.0"
+        run: |
+          curl -sSfL \
+            https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+            | sh -s -- -b /usr/local/bin "v${GRYPE_VERSION}"
+
+      - name: Install syft (SBOM generation)
+        env:
+          SYFT_VERSION: "1.46.0"
+        run: |
+          curl -sSfL \
+            https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin "v${SYFT_VERSION}"
+
+      - name: Set cache date
+        id: date
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore grype DB cache
+        id: grype-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/grype-db
+          key: grype-db-${{ runner.os }}-${{ steps.date.outputs.date }}
+          restore-keys: grype-db-${{ runner.os }}-
+
+      - name: Update grype DB
+        run: grype db update
+        env:
+          GRYPE_DB_CACHE_DIR: ${{ runner.temp }}/grype-db
+
+      - name: Generate test SBOMs
+        run: |
+          syft . --output spdx-json=test.spdx.json
+
+      - name: Build grype-verify
+        run: cargo build --release
+
+      - name: Run integration tests
+        env:
+          GRYPE_DB_CACHE_DIR: ${{ runner.temp }}/grype-db
+          GRYPE_VERIFY_TEST_SBOM_DIR: ${{ github.workspace }}
+        run: cargo test --test integration -- --nocapture
