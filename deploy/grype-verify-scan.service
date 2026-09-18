@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Intel Corporation
+#
+# Oneshot re-scan of every SBOM in SBOM_DIR. Driven by grype-verify-scan.timer.
+#
+# Install:
+#   sudo install -m 0755 deploy/scan-all.sh /usr/local/bin/grype-verify-scan-all
+#   sudo install -m 0644 deploy/grype-verify.env /etc/grype-verify.env
+#   sudo cp deploy/grype-verify-scan.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now grype-verify-scan.timer
+
+[Unit]
+Description=grype-verify SBOM vulnerability re-scan
+Documentation=https://github.com/sandlbn/grype-verify
+# Best-effort ordering: if the network is up we refresh the DB, if not the scan
+# still runs against the cached DB. Deliberately not Requires=.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/grype-verify.env
+ExecStart=/usr/local/bin/grype-verify-scan-all
+
+User=grype-verify
+Group=grype-verify
+StateDirectory=grype-verify
+WorkingDirectory=/var/lib/grype-verify
+
+# A vulnerable result (exit 2) is a successful scan, not a unit failure —
+# otherwise every finding would mark the timer as failed.
+SuccessExitStatus=0 2
+
+# Hardening — the scan only needs to read SBOMs and write its own state dir.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

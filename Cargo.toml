@@ -2,7 +2,7 @@
 # Copyright 2026 Intel Corporation
 [package]
 name = "grype-verify"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Offline-aware grype vulnerability scanner with embedded result tracking and REST API"
 

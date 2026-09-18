@@ -36,6 +36,11 @@ pub struct ScanArgs {
     #[arg(long, default_value_t = 30)]
     pub update_timeout: u64,
 
+    /// Also write a SARIF report to this path (for GitHub Code Scanning upload).
+    /// Independent of --output, so you can keep a readable table on stdout.
+    #[arg(long, value_name = "PATH")]
+    pub sarif_file: Option<String>,
+
     /// Path to the SQLite checks database (set to empty string to skip recording)
     #[arg(long, env = "GRYPE_CHECKS_DB", default_value = "grype-checks.db")]
     pub checks_db: String,
@@ -63,10 +68,55 @@ fn try_db_update(args: &ScanArgs) -> anyhow::Result<bool> {
     Ok(status.success())
 }
 
+/// Outcome of a single grype invocation.
+struct ScanOutcome {
+    exit_code: i32,
+    /// stdout in the user's chosen --output format, stored verbatim in the DB.
+    stdout_text: String,
+    /// Severity tally parsed from the JSON side-channel report.
+    severity: db::SeverityCounts,
+}
+
+/// A temp file that deletes itself on drop, so a failed scan leaves nothing behind.
+struct TempFile(std::path::PathBuf);
+
+impl TempFile {
+    fn new(tag: &str) -> Self {
+        let name = format!(
+            "grype-verify-{}-{}-{}.json",
+            tag,
+            std::process::id(),
+            db::now_unix()
+        );
+        TempFile(std::env::temp_dir().join(name))
+    }
+
+    fn path(&self) -> &str {
+        self.0.to_str().unwrap_or("")
+    }
+}
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        std::fs::remove_file(&self.0).ok();
+    }
+}
+
 /// Run grype scan, capturing stdout for DB storage while re-emitting to our stdout.
-fn run_grype_scan(args: &ScanArgs, skip_auto_update: bool) -> anyhow::Result<(i32, String)> {
+///
+/// grype's `-o` accepts multiple formats and supports a `format=file` target, so a
+/// single scan can serve three consumers at once: the user's format on stdout, a
+/// JSON report we parse for severity counts, and an optional SARIF file.
+fn run_grype_scan(args: &ScanArgs, skip_auto_update: bool) -> anyhow::Result<ScanOutcome> {
+    let json_report = TempFile::new("report");
+
     let mut cmd = Command::new("grype");
-    cmd.args(["--output", &args.output, "--fail-on", &args.fail_on]);
+    cmd.args(["--output", &args.output]);
+    cmd.args(["--output", &format!("json={}", json_report.path())]);
+    if let Some(sarif) = &args.sarif_file {
+        cmd.args(["--output", &format!("sarif={sarif}")]);
+    }
+    cmd.args(["--fail-on", &args.fail_on]);
     if args.only_fixed {
         cmd.arg("--only-fixed");
     }
@@ -88,8 +138,32 @@ fn run_grype_scan(args: &ScanArgs, skip_auto_update: bool) -> anyhow::Result<(i3
     // Re-emit captured stdout so the caller sees the scan results.
     print!("{}", stdout_text);
 
-    let code = output.status.code().unwrap_or(2);
-    Ok((code, stdout_text))
+    // A failed scan may not have produced the JSON report; fall back to zeroed
+    // counts rather than masking grype's own exit code with a parse error.
+    let severity = match std::fs::read_to_string(json_report.path()) {
+        Ok(text) => db::SeverityCounts::from_grype_json(&text).unwrap_or_else(|e| {
+            eprintln!("[grype-verify] WARNING: could not parse severity breakdown: {e}");
+            db::SeverityCounts::default()
+        }),
+        Err(e) => {
+            eprintln!("[grype-verify] WARNING: no JSON report produced ({e}); severity counts unavailable.");
+            db::SeverityCounts::default()
+        }
+    };
+
+    if let Some(sarif) = &args.sarif_file {
+        if std::path::Path::new(sarif).exists() {
+            eprintln!("[grype-verify] SARIF report written to {sarif}");
+        } else {
+            eprintln!("[grype-verify] WARNING: SARIF report was not written to {sarif}");
+        }
+    }
+
+    Ok(ScanOutcome {
+        exit_code: output.status.code().unwrap_or(1),
+        stdout_text,
+        severity,
+    })
 }
 
 pub fn run(args: ScanArgs) -> anyhow::Result<()> {
@@ -113,8 +187,14 @@ pub fn run(args: ScanArgs) -> anyhow::Result<()> {
     };
 
     let t0 = Instant::now();
-    let (exit_code, raw_output) = run_grype_scan(&args, true)?;
+    let outcome = run_grype_scan(&args, true)?;
     let duration_ms = t0.elapsed().as_millis() as i64;
+    let sev = &outcome.severity;
+
+    eprintln!(
+        "[grype-verify] Severity breakdown: critical={} high={} medium={} low={} negligible={} unknown={} (total={})",
+        sev.critical, sev.high, sev.medium, sev.low, sev.negligible, sev.unknown, sev.total()
+    );
 
     // Record the result unless the user opted out with an empty path.
     if !args.checks_db.is_empty() {
@@ -126,12 +206,15 @@ pub fn run(args: ScanArgs) -> anyhow::Result<()> {
             sbom_path: args.sbom_file.clone(),
             mode: mode.to_string(),
             db_updated,
-            exit_code,
-            result: db::result_label(exit_code).to_string(),
+            exit_code: outcome.exit_code,
+            result: db::result_label(outcome.exit_code).to_string(),
             fail_on: args.fail_on.clone(),
             output_fmt: args.output.clone(),
             duration_ms,
-            raw_output: Some(raw_output),
+            total_vulns: sev.total(),
+            severity: sev.clone(),
+            sarif_path: args.sarif_file.clone(),
+            raw_output: Some(outcome.stdout_text),
         };
         let row_id = db::insert(&conn, &rec)?;
         eprintln!(
@@ -140,5 +223,5 @@ pub fn run(args: ScanArgs) -> anyhow::Result<()> {
         );
     }
 
-    std::process::exit(exit_code);
+    std::process::exit(outcome.exit_code);
 }

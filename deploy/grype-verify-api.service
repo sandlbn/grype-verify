@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Intel Corporation
+#
+# Long-running REST API that Splunk polls. Reads the same database the timer
+# writes to, so scan history is available the moment a scan completes.
+#
+# Install:
+#   sudo cp deploy/grype-verify-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now grype-verify-api
+
+[Unit]
+Description=grype-verify scan history REST API
+Documentation=https://github.com/sandlbn/grype-verify
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/grype-verify.env
+ExecStart=/usr/local/bin/grype-verify serve --bind ${API_BIND} --port ${API_PORT}
+Restart=on-failure
+RestartSec=5s
+
+User=grype-verify
+Group=grype-verify
+StateDirectory=grype-verify
+WorkingDirectory=/var/lib/grype-verify
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

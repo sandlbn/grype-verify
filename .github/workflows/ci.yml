@@ -35,7 +35,11 @@ jobs:
         run: cargo fmt --check
 
       - name: Clippy (deny warnings)
-        run: cargo clippy -- -D warnings
+        # --all-targets so tests and integration tests are linted too
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Shellcheck deploy scripts
+        run: shellcheck deploy/*.sh
 
   test:
     name: Unit tests

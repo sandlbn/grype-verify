@@ -78,7 +78,8 @@ COPY --from=builder   /build/target/release/grype-verify /usr/local/bin/grype-ve
 
 # /data/grype-db  – grype vulnerability database cache (mount a persistent volume)
 # /data/checks    – SQLite checks database (mount a persistent volume)
-VOLUME ["/data/grype-db", "/data/checks"]
+# /data/sarif     – SARIF reports written via --sarif-file (mount to retrieve them)
+VOLUME ["/data/grype-db", "/data/checks", "/data/sarif"]
 
 ENV GRYPE_DB_CACHE_DIR=/data/grype-db \
     GRYPE_CHECKS_DB=/data/checks/grype-checks.db

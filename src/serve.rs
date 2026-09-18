@@ -168,6 +168,18 @@ fn handle_latest(db_path: &str, query: &[(String, String)]) -> String {
     }
 }
 
+fn handle_trend(db_path: &str, query: &[(String, String)]) -> String {
+    let days: Option<i64> = qparam(query, "days").and_then(|v| v.parse().ok());
+
+    match db::open(db_path).and_then(|c| db::query_trend(&c, days)) {
+        Ok(points) => match serde_json::to_string(&points) {
+            Ok(arr) => http_ok(format!("{{\"total\":{},\"results\":{arr}}}", points.len())),
+            Err(e) => http_err("500 Internal Server Error", &e.to_string()),
+        },
+        Err(e) => http_err("500 Internal Server Error", &e.to_string()),
+    }
+}
+
 // ─── connection handler ───────────────────────────────────────────────────────
 
 fn handle_connection(mut stream: TcpStream, db_path: &str) -> anyhow::Result<()> {
@@ -188,6 +200,7 @@ fn handle_connection(mut stream: TcpStream, db_path: &str) -> anyhow::Result<()>
         "/api/v1/health" => handle_health(db_path),
         "/api/v1/checks/latest" => handle_latest(db_path, &req.query),
         "/api/v1/checks" => handle_checks(db_path, &req.query),
+        "/api/v1/trend" => handle_trend(db_path, &req.query),
         _ => http_err("404 Not Found", "unknown endpoint"),
     };
 
@@ -198,6 +211,39 @@ fn handle_connection(mut stream: TcpStream, db_path: &str) -> anyhow::Result<()>
 }
 
 // ─── server entry point ───────────────────────────────────────────────────────
+
+pub fn run(args: ServeArgs) -> anyhow::Result<()> {
+    let addr = format!("{}:{}", args.bind, args.port);
+    let listener = TcpListener::bind(&addr).with_context(|| format!("failed to bind to {addr}"))?;
+
+    eprintln!("[grype-verify] API server listening on http://{addr}");
+    eprintln!("[grype-verify] Endpoints:");
+    eprintln!("  GET http://{addr}/api/v1/health");
+    eprintln!("  GET http://{addr}/api/v1/checks[?since=<unix_ts>&limit=<n>&raw=1]");
+    eprintln!("  GET http://{addr}/api/v1/checks/latest[?raw=1]");
+    eprintln!("  GET http://{addr}/api/v1/trend[?days=<n>]");
+    eprintln!("[grype-verify] Splunk: | rest url=\"http://{addr}/api/v1/checks\"");
+
+    // Ensure the DB and schema exist before accepting connections.
+    db::open(&args.checks_db).context("failed to open checks DB")?;
+
+    let db_path = Arc::new(args.checks_db);
+
+    for stream in listener.incoming() {
+        match stream {
+            Ok(s) => {
+                let db_path = Arc::clone(&db_path);
+                std::thread::spawn(move || {
+                    if let Err(e) = handle_connection(s, &db_path) {
+                        eprintln!("[grype-verify] handler error: {e}");
+                    }
+                });
+            }
+            Err(e) => eprintln!("[grype-verify] accept error: {e}"),
+        }
+    }
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
@@ -318,6 +364,13 @@ mod tests {
             fail_on: "critical".to_string(),
             output_fmt: "table".to_string(),
             duration_ms: 100,
+            severity: crate::db::SeverityCounts {
+                critical: 1,
+                high: 2,
+                ..Default::default()
+            },
+            total_vulns: 3,
+            sarif_path: None,
             raw_output: None,
         };
         crate::db::insert(&conn, &rec).unwrap();
@@ -327,36 +380,74 @@ mod tests {
         assert!(resp.contains("\"total\":1"));
         assert!(resp.contains("test.spdx.json"));
     }
-}
 
-pub fn run(args: ServeArgs) -> anyhow::Result<()> {
-    let addr = format!("{}:{}", args.bind, args.port);
-    let listener = TcpListener::bind(&addr).with_context(|| format!("failed to bind to {addr}"))?;
-
-    eprintln!("[grype-verify] API server listening on http://{addr}");
-    eprintln!("[grype-verify] Endpoints:");
-    eprintln!("  GET http://{addr}/api/v1/health");
-    eprintln!("  GET http://{addr}/api/v1/checks[?since=<unix_ts>&limit=<n>&raw=1]");
-    eprintln!("  GET http://{addr}/api/v1/checks/latest[?raw=1]");
-    eprintln!("[grype-verify] Splunk: | rest url=\"http://{addr}/api/v1/checks\"");
-
-    // Ensure the DB and schema exist before accepting connections.
-    db::open(&args.checks_db).context("failed to open checks DB")?;
-
-    let db_path = Arc::new(args.checks_db);
-
-    for stream in listener.incoming() {
-        match stream {
-            Ok(s) => {
-                let db_path = Arc::clone(&db_path);
-                std::thread::spawn(move || {
-                    if let Err(e) = handle_connection(s, &db_path) {
-                        eprintln!("[grype-verify] handler error: {e}");
-                    }
-                });
-            }
-            Err(e) => eprintln!("[grype-verify] accept error: {e}"),
-        }
+    #[test]
+    fn test_handle_latest_includes_severity_breakdown() {
+        let path = tmp_db();
+        let conn = crate::db::open(&path).unwrap();
+        let rec = crate::db::CheckRecord {
+            id: 0,
+            timestamp: 9999,
+            timestamp_iso: None,
+            sbom_path: "test.spdx.json".to_string(),
+            mode: "online".to_string(),
+            db_updated: true,
+            exit_code: 2,
+            result: "vulnerable".to_string(),
+            fail_on: "critical".to_string(),
+            output_fmt: "table".to_string(),
+            duration_ms: 100,
+            severity: crate::db::SeverityCounts {
+                critical: 4,
+                high: 7,
+                ..Default::default()
+            },
+            total_vulns: 11,
+            sarif_path: Some("/tmp/x.sarif".to_string()),
+            raw_output: None,
+        };
+        crate::db::insert(&conn, &rec).unwrap();
+        drop(conn);
+        let resp = handle_latest(&path, &[]);
+        std::fs::remove_file(&path).ok();
+        assert!(resp.contains("\"critical\":4"), "resp: {resp}");
+        assert!(resp.contains("\"high\":7"));
+        assert!(resp.contains("\"total_vulns\":11"));
+        assert!(resp.contains("/tmp/x.sarif"));
     }
-    Ok(())
+
+    #[test]
+    fn test_handle_trend_aggregates_by_day() {
+        let path = tmp_db();
+        let conn = crate::db::open(&path).unwrap();
+        for (ts, crit) in [(86_400, 1), (86_500, 2), (200_000, 5)] {
+            let mut rec = crate::db::CheckRecord {
+                id: 0,
+                timestamp: ts,
+                timestamp_iso: None,
+                sbom_path: "a.spdx.json".to_string(),
+                mode: "online".to_string(),
+                db_updated: true,
+                exit_code: 0,
+                result: "clean".to_string(),
+                fail_on: "critical".to_string(),
+                output_fmt: "table".to_string(),
+                duration_ms: 10,
+                severity: crate::db::SeverityCounts::default(),
+                total_vulns: 0,
+                sarif_path: None,
+                raw_output: None,
+            };
+            rec.severity.critical = crit;
+            rec.total_vulns = rec.severity.total();
+            crate::db::insert(&conn, &rec).unwrap();
+        }
+        drop(conn);
+        let resp = handle_trend(&path, &[]);
+        std::fs::remove_file(&path).ok();
+        // Two distinct days: 1970-01-02 (1+2 critical) and 1970-01-03 (5 critical)
+        assert!(resp.contains("\"total\":2"), "resp: {resp}");
+        assert!(resp.contains("1970-01-02"));
+        assert!(resp.contains("1970-01-03"));
+    }
 }

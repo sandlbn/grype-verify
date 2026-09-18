@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Intel Corporation
+#
+# cron alternative to the systemd timer, for hosts without systemd or where a
+# user-level schedule is preferred. Install with:  crontab -e
+#
+# Note: cron runs with a minimal environment — set PATH explicitly so the
+# grype and grype-verify binaries are found.
+
+PATH=/usr/local/bin:/usr/bin:/bin
+GRYPE_CHECKS_DB=/var/lib/grype-verify/grype-checks.db
+GRYPE_DB_CACHE_DIR=/var/lib/grype-verify/grype-db
+SBOM_DIR=/var/lib/grype-verify/sboms
+FAIL_ON=high
+
+# Daily re-scan at 03:00. Output goes to syslog; the scan result itself is
+# recorded in the embedded database regardless.
+0 3 * * *  /usr/local/bin/grype-verify-scan-all 2>&1 | logger -t grype-verify
+
+# Single SBOM instead of a directory:
+#0 3 * * *  /usr/local/bin/grype-verify scan /path/to/app.spdx.json --fail-on high 2>&1 | logger -t grype-verify
+
+# Weekly, Sunday 04:00, also writing SARIF for upload:
+#0 4 * * 0  SARIF_DIR=/var/lib/grype-verify/sarif /usr/local/bin/grype-verify-scan-all 2>&1 | logger -t grype-verify
