@@ -1,0 +1,98 @@
+<dashboard version="1.1" theme="dark">
+  <label>grype-verify: SBOM Vulnerability Overview</label>
+  <description>Scan history pulled from the grype-verify REST API</description>
+
+  <fieldset submitButton="false">
+    <input type="time" token="tr">
+      <label>Time range</label>
+      <default>
+        <earliest>-30d@d</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+  </fieldset>
+
+  <row>
+    <panel>
+      <title>Current posture (latest scan per component)</title>
+      <table>
+        <search>
+          <query>
+            index=main sourcetype=grype:check
+            | stats latest(result) AS Result, latest(total_vulns) AS Total,
+                    latest(severity.critical) AS Critical, latest(severity.high) AS High,
+                    latest(severity.medium) AS Medium, latest(mode) AS Mode,
+                    latest(_time) AS LastScan
+              BY sbom_path
+            | eval Component=replace(sbom_path,".*/","")
+            | eval LastScan=strftime(LastScan,"%Y-%m-%d %H:%M")
+            | table Component Result Total Critical High Medium Mode LastScan
+            | sort - Critical - High
+          </query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <format type="color" field="Result">
+          <colorPalette type="map">{"clean":#118832,"vulnerable":#D41F1F,"error":#CBA700}</colorPalette>
+        </format>
+        <format type="color" field="Critical">
+          <colorPalette type="minMidMax" maxColor="#D41F1F" midColor="#FFFFFF" minColor="#FFFFFF"></colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Severity trend</title>
+      <chart>
+        <search>
+          <query>
+            index=main sourcetype=grype:check
+            | timechart span=1d sum(severity.critical) AS Critical,
+                                sum(severity.high) AS High,
+                                sum(severity.medium) AS Medium
+          </query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.fieldColors">{"Critical":#D41F1F,"High":#F8BE34,"Medium":#1182F3}</option>
+        <option name="charting.axisTitleY.text">Vulnerabilities</option>
+        <option name="charting.legend.placement">bottom</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Scans running offline (cached DB — results may be stale)</title>
+      <table>
+        <search>
+          <query>
+            index=main sourcetype=grype:check mode=offline
+            | eval Component=replace(sbom_path,".*/","")
+            | eval Scanned=strftime(_time,"%Y-%m-%d %H:%M")
+            | table Scanned Component Result total_vulns
+            | sort - Scanned
+          </query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+    <panel>
+      <title>Online vs offline scans</title>
+      <chart>
+        <search>
+          <query>index=main sourcetype=grype:check | stats count BY mode</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+      </chart>
+    </panel>
+  </row>
+</dashboard>
